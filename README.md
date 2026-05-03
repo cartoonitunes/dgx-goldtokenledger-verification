@@ -1,9 +1,9 @@
 # DGX GoldTokenLedger - Source Reconstruction
 
 **Contract:** [`0x55b9a11c2e8351b4ffc7b11561148bfac9977855`](https://etherscan.io/address/0x55b9a11c2e8351b4ffc7b11561148bfac9977855)
-**Compiler:** solc 0.3.3-0.3.6 (exact version TBD)
+**Compiler:** solc 0.3.6 native, `--optimize --optimize-runs=1`
 **Runtime bytecode:** 6,770 bytes
-**Verification status:** Source reconstructed. All 44 function names known.
+**Verification status:** Source reconstructed. All 44 function names known. Compiler identified by matching dispatcher prefix (`60606040523615...`), v0.3.x gas stipend (`PUSH2 0x61da GAS SUB CALL`), and constant-optimizer multiplication trick (`PUSH1 X PUSH1 0x02 EXP PUSH<n> Y MUL`). Reconstructed source compiles to 6,483 bytes (287 short of target); the remaining gap is in shared subroutines that the optimizer creates from cross-function CSE patterns we have not been able to reproduce without the original source structure.
 
 ## About
 
@@ -105,6 +105,16 @@ payStorageFee(_gold)
   -> emit Transfer event
 ```
 
+## Compiler identification
+
+Three signatures in the on-chain bytecode pin down the compiler:
+
+1. **Dispatcher prefix** `60606040523615 6101f8 57 60e060020a 600035 04 63...` — pre-v0.4.8 (no `63ffffffff` AND-mask) and pre-v0.4.0 (no `payable` value-checks before each function entry).
+2. **Gas stipend** every external call uses `PUSH2 0x61da GAS SUB CALL` (gas - 25050). v0.4.x changed this to `PUSH1 0x32 GAS SUB CALL` (gas - 50). The `0x61da` value is the v0.3.x signature.
+3. **Constant optimizer** every 14-22 byte string literal is encoded as `PUSH1 X PUSH1 0x02 EXP PUSH<n> Y MUL` instead of `PUSH32 LITERAL`, saving 11 bytes per literal. This pass only fires under `--optimize-runs=1` (size-optimized). With default `--optimize-runs=200`, the same compiler emits `PUSH32` directly.
+
+Recompiling our reconstructed source with `solc-0.3.6 --optimize --optimize-runs=1` reproduces all three signatures. Other versions miss at least one: v0.3.0–v0.3.5 don't apply the constant optimizer here even with `--optimize-runs=1`; v0.4.0–v0.4.7 add value-checks unless every function is `payable`; v0.4.8+ insert the `63ffffffff` mask.
+
 ## Attribution
 
-Source reconstructed by [EthereumHistory](https://ethereumhistory.com) via bytecode reverse engineering. The function name `regFeePayment` for selector `0x65afd0ed` and the exact `payStorageFee` implementation were provided by **Anthony Eufemio** (Digix CTO).
+Source reconstructed by [EthereumHistory](https://ethereumhistory.com) via bytecode reverse engineering. The function name `regFeePayment` for selector `0x65afd0ed` and the exact `payStorageFee` implementation were provided by **Anthony Eufemio** (Digix CTO). Compiler identification (`solc 0.3.6 --optimize-runs=1`) was bracketed by sweeping prefix/gas-stipend/constant-optimizer signatures across solc 0.1.1 through 0.4.21.

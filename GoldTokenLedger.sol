@@ -1,7 +1,3 @@
-// Submitted by EthereumHistory (ethereumhistory.com)
-// Source reconstructed via bytecode reverse engineering.
-// Function name 0x65afd0ed = regFeePayment confirmed by Anthony Eufemio (Digix CTO).
-
 contract DGXConfig {
     function getConfigEntryAddr(bytes32 key) returns (address);
     function getConfigEntryInt(bytes32 key) returns (uint);
@@ -18,6 +14,8 @@ contract GoldRegistry {
 }
 
 contract GoldTokenLedger {
+    function () {}
+
     struct Account {
         bool initialized;
         uint balance;
@@ -43,10 +41,10 @@ contract GoldTokenLedger {
         return owner;
     }
 
-    function setOwner(address _owner) returns (bool) {
-        if (msg.sender != owner) throw;
-        owner = _owner;
-        return true;
+    function setOwner(address _owner) {
+        if (msg.sender == owner) {
+            owner = _owner;
+        }
     }
 
     function getConfigAddress() returns (address) {
@@ -91,6 +89,7 @@ contract GoldTokenLedger {
     }
 
     function balanceOf(address who) returns (uint) {
+        if (who == 0) return 0;
         uint bal = users[who].balance;
         uint due = calculateDemurrage(who);
         if (due >= bal) return 0;
@@ -102,7 +101,6 @@ contract GoldTokenLedger {
     }
 
     function getFeeDays(address who) returns (uint) {
-        if (users[who].lastPaid == 0) return 0;
         return (now - users[who].lastPaid) / billingPeriod();
     }
 
@@ -111,6 +109,7 @@ contract GoldTokenLedger {
     }
 
     function calculateDemurrage(address who) returns (uint) {
+        if (users[who].lastPaid == 0) return 0;
         return demurrageCalc(users[who].balance, getFeeDays(who));
     }
 
