@@ -1,7 +1,6 @@
 // Submitted by EthereumHistory (ethereumhistory.com)
 // Source reconstructed via bytecode reverse engineering.
-// All 44 function selectors identified. One function name is a placeholder:
-// recordStorageFeePayment (selector 0x65afd0ed) — true name unknown.
+// Function name 0x65afd0ed = regFeePayment confirmed by Anthony Eufemio (Digix CTO).
 
 contract DGXConfig {
     function getConfigEntryAddr(bytes32 key) returns (address);
@@ -14,8 +13,8 @@ contract AddressRegistry {
 }
 
 contract GoldRegistry {
-    function getFee(address who) returns (uint);
-    function recordStorageFeePayment(address who) returns (bool); // selector 0x65afd0ed — placeholder name
+    function getFee(address _gold) returns (uint);
+    function regFeePayment(address _gold) returns (bool);
 }
 
 contract GoldTokenLedger {
@@ -29,7 +28,7 @@ contract GoldTokenLedger {
     address public config;
     address public owner;
     uint public totalSupply;
-    mapping(address => Account) accounts;
+    mapping(address => Account) users;
 
     event Transfer(address indexed _from, address indexed _to, uint256 indexed _value);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
@@ -78,27 +77,33 @@ contract GoldTokenLedger {
     function txFeeMax() returns (uint) { return DGXConfig(config).getConfigEntryInt("settings/txfeemax"); }
 
     function userExists(address who) returns (bool) {
-        return accounts[who].initialized;
+        return users[who].initialized;
+    }
+
+    function addUser(address who) internal {
+        users[who].initialized = true;
+        users[who].lastPaid = now;
+        NewAccount(who);
     }
 
     function allowance(address _owner, address _spender) constant returns (uint) {
-        return accounts[_owner].allowance[_spender];
+        return users[_owner].allowance[_spender];
     }
 
     function balanceOf(address who) returns (uint) {
-        uint bal = accounts[who].balance;
+        uint bal = users[who].balance;
         uint due = calculateDemurrage(who);
         if (due >= bal) return 0;
         return bal - due;
     }
 
     function actualBalanceOf(address who) returns (uint) {
-        return accounts[who].balance;
+        return users[who].balance;
     }
 
     function getFeeDays(address who) returns (uint) {
-        if (accounts[who].lastPaid == 0) return 0;
-        return (now - accounts[who].lastPaid) / billingPeriod();
+        if (users[who].lastPaid == 0) return 0;
+        return (now - users[who].lastPaid) / billingPeriod();
     }
 
     function demurrageCalc(uint _balance, uint _days) returns (uint) {
@@ -106,7 +111,7 @@ contract GoldTokenLedger {
     }
 
     function calculateDemurrage(address who) returns (uint) {
-        return demurrageCalc(accounts[who].balance, getFeeDays(who));
+        return demurrageCalc(users[who].balance, getFeeDays(who));
     }
 
     function calculateTxFee(uint _value, address _user) returns (uint) {
@@ -134,69 +139,56 @@ contract GoldTokenLedger {
     }
 
     function approve(address _addr, uint _val) returns (bool) {
-        accounts[msg.sender].allowance[_addr] = _val;
+        users[msg.sender].allowance[_addr] = _val;
         Approval(msg.sender, _addr, _val);
         return true;
     }
 
-    function settle(address who) internal returns (bool) {
+    function deductFees(address who) returns (bool) {
         if (who == accountingWallet()) return true;
         if (who == txFeeWallet()) return true;
-        uint balance = accounts[who].balance;
+        uint balance = users[who].balance;
         if (balance == 0) {
-            accounts[who].lastPaid = now;
+            users[who].lastPaid = now;
             return true;
         }
         uint fee = calculateDemurrage(who);
         if (fee == 0) {
-            accounts[who].lastPaid = now;
+            users[who].lastPaid = now;
             return true;
         }
         if (fee > balance) fee = balance;
-        accounts[who].balance -= fee;
-        accounts[accountingWallet()].balance += fee;
+        users[who].balance -= fee;
+        users[accountingWallet()].balance += fee;
         Transfer(who, accountingWallet(), fee);
-        accounts[who].lastPaid = now;
+        users[who].lastPaid = now;
         return true;
     }
 
-    function deductFees(address who) returns (bool) {
-        return settle(who);
-    }
-
-    function payStorageFee(address who) returns (bool) {
-        uint fee = GoldRegistry(goldRegistry()).getFee(who);
-        if (!accounts[tx.origin].initialized) {
-            accounts[tx.origin].initialized = true;
-            accounts[tx.origin].lastPaid = now;
-            NewAccount(tx.origin);
-        }
-        if (!settle(tx.origin)) throw;
-        if (accounts[tx.origin].balance < fee) throw;
-        if (!GoldRegistry(goldRegistry()).recordStorageFeePayment(who)) throw;
-        accounts[tx.origin].balance -= fee;
-        accounts[accountingWallet()].balance += fee;
-        Transfer(tx.origin, accountingWallet(), fee);
-        return true;
+    function payStorageFee(address _gold) {
+        uint256 _sfee = GoldRegistry(goldRegistry()).getFee(_gold);
+        if (!userExists(tx.origin)) addUser(tx.origin);
+        if (!deductFees(tx.origin)) throw;
+        if (balanceOf(tx.origin) < _sfee) throw;
+        if (!GoldRegistry(goldRegistry()).regFeePayment(_gold)) throw;
+        users[tx.origin].balance -= _sfee;
+        users[accountingWallet()].balance += _sfee;
+        Transfer(tx.origin, accountingWallet(), _sfee);
     }
 
     function transfer(address _to, uint _value) returns (bool) {
         if (_to == 0) throw;
-        if (!accounts[_to].initialized) {
-            accounts[_to].initialized = true;
-            accounts[_to].lastPaid = now;
-            NewAccount(_to);
-        }
+        if (!userExists(_to)) addUser(_to);
         uint fee = calculateTxFee(_value, msg.sender);
         if (msg.sender == accountingWallet()) fee = 0;
         if (msg.sender == txFeeWallet()) fee = 0;
         uint total = _value + fee;
-        if (accounts[msg.sender].balance < total) return false;
-        if (!settle(msg.sender)) return false;
-        if (!settle(_to)) return false;
-        accounts[msg.sender].balance -= total;
-        accounts[_to].balance += _value;
-        accounts[txFeeWallet()].balance += fee;
+        if (users[msg.sender].balance < total) return false;
+        if (!deductFees(msg.sender)) return false;
+        if (!deductFees(_to)) return false;
+        users[msg.sender].balance -= total;
+        users[_to].balance += _value;
+        users[txFeeWallet()].balance += fee;
         Transfer(msg.sender, txFeeWallet(), fee);
         Transfer(msg.sender, _to, _value);
         return true;
@@ -204,23 +196,19 @@ contract GoldTokenLedger {
 
     function transferFrom(address _from, address _to, uint _value) returns (bool) {
         if (_to == 0) throw;
-        if (!accounts[_to].initialized) {
-            accounts[_to].initialized = true;
-            accounts[_to].lastPaid = now;
-            NewAccount(_to);
-        }
+        if (!userExists(_to)) addUser(_to);
         uint fee = calculateTxFee(_value, _from);
         if (_from == accountingWallet()) fee = 0;
         if (_from == txFeeWallet()) fee = 0;
         uint total = _value + fee;
-        if (accounts[_from].allowance[msg.sender] < total) return false;
-        if (accounts[_from].balance < total) return false;
-        if (!settle(_from)) return false;
-        if (!settle(_to)) return false;
-        accounts[_from].allowance[msg.sender] -= total;
-        accounts[_from].balance -= total;
-        accounts[_to].balance += _value;
-        accounts[txFeeWallet()].balance += fee;
+        if (users[_from].allowance[msg.sender] < total) return false;
+        if (users[_from].balance < total) return false;
+        if (!deductFees(_from)) return false;
+        if (!deductFees(_to)) return false;
+        users[_from].allowance[msg.sender] -= total;
+        users[_from].balance -= total;
+        users[_to].balance += _value;
+        users[txFeeWallet()].balance += fee;
         Transfer(_from, txFeeWallet(), fee);
         Transfer(_from, _to, _value);
         return true;
@@ -228,24 +216,20 @@ contract GoldTokenLedger {
 
     function auditRelease() returns (bool) {
         if (msg.sender != txFeeWallet()) return false;
-        uint bal = accounts[txFeeWallet()].balance;
-        accounts[txFeeWallet()].balance = 0;
-        accounts[accountingWallet()].balance += bal;
+        uint bal = users[txFeeWallet()].balance;
+        users[txFeeWallet()].balance = 0;
+        users[accountingWallet()].balance += bal;
         Transfer(msg.sender, accountingWallet(), bal);
         return true;
     }
 
     function ledgerMint(address _bar, address _to, uint256 _value, uint256 _fee) returns (bool) {
         if (msg.sender != goldRegistry()) return false;
-        if (!accounts[_to].initialized) {
-            accounts[_to].initialized = true;
-            accounts[_to].lastPaid = now;
-            NewAccount(_to);
-        }
+        if (!userExists(_to)) addUser(_to);
         if (!userExists(_to)) return false;
-        accounts[accountingWallet()].balance += _fee;
+        users[accountingWallet()].balance += _fee;
         Transfer(tx.origin, accountingWallet(), _fee);
-        accounts[_to].balance += _value - _fee;
+        users[_to].balance += _value - _fee;
         totalSupply += _value;
         Transfer(tx.origin, _to, _value - _fee);
         return true;
@@ -253,17 +237,13 @@ contract GoldTokenLedger {
 
     function recastCall(address _from, address _to, uint256 _value, uint256 _fee) returns (bool) {
         if (msg.sender != recastContract()) return false;
-        if (!accounts[_to].initialized) {
-            accounts[_to].initialized = true;
-            accounts[_to].lastPaid = now;
-            NewAccount(_to);
-        }
-        settle(_from);
-        if (accounts[_from].balance < (_value + _fee)) return false;
+        if (!userExists(_to)) addUser(_to);
+        deductFees(_from);
+        if (users[_from].balance < (_value + _fee)) return false;
         if (!userExists(_to)) return false;
-        accounts[_from].balance -= (_value + _fee);
-        accounts[_to].balance += _value;
-        accounts[accountingWallet()].balance += _fee;
+        users[_from].balance -= (_value + _fee);
+        users[_to].balance += _value;
+        users[accountingWallet()].balance += _fee;
         Transfer(_from, accountingWallet(), _fee);
         Transfer(_from, _to, _value);
         return true;

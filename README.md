@@ -3,7 +3,7 @@
 **Contract:** [`0x55b9a11c2e8351b4ffc7b11561148bfac9977855`](https://etherscan.io/address/0x55b9a11c2e8351b4ffc7b11561148bfac9977855)
 **Compiler:** solc 0.3.3-0.3.6 (exact version TBD)
 **Runtime bytecode:** 6,770 bytes
-**Verification status:** Source reconstructed (near-exact). One unknown function name.
+**Verification status:** Source reconstructed. All 44 function names known.
 
 ## About
 
@@ -22,15 +22,14 @@ All configuration (fee rates, wallet addresses, role registries) is read from an
 
 All 44 public function dispatch entries were identified by reverse-engineering the on-chain bytecode. The source in `GoldTokenLedger.sol` reproduces the full contract logic.
 
-### One unknown function name
+### Selector 0x65afd0ed = `regFeePayment`
 
-Selector `0x65afd0ed` is called from `payStorageFee()` on the GoldRegistry contract. We know:
-- It takes 1 address argument and returns bool
-- In GoldRegistry, it verifies `msg.sender` is the GoldTokenLedger, then calls `0x493b26b3(3, who)` on a hardcoded payment history contract (`0x55dbd10c0e2ca1e86b2c5045d0c0a53059f3a816`)
-- The downstream call stores `block.timestamp` in a storage mapping, recording when storage fees were last paid
-- The selector is NOT in 4byte.directory and over 17,000 brute-force name guesses returned no match
+The selector `0x65afd0ed` was the last unknown name on the contract — not present in 4byte.directory and over 17,000 brute-force name guesses returned no match. **Anthony Eufemio (Digix CTO) provided the original function name and the exact `payStorageFee` implementation**, confirming:
 
-In the reconstructed source, this function is named `recordStorageFeePayment` as a semantic placeholder. The true function name is unknown.
+- Selector `0x65afd0ed` = `regFeePayment(address)` on the GoldRegistry
+- The token-side `payStorageFee` implementation, including variable names (`_gold`, `_sfee`) and the use of `addUser`, `deductFees`, and `balanceOf` helpers
+
+The reconstructed source now reflects these exact names and structure.
 
 ## All 44 function selectors
 
@@ -95,17 +94,17 @@ In the reconstructed source, this function is named `recordStorageFeePayment` as
 ## payStorageFee flow
 
 ```
-payStorageFee(who)
-  -> GoldRegistry.getFee(who)           // get fee amount
-  -> initialize tx.origin if new        // create account if first interaction
-  -> settle(tx.origin)                  // deduct any accrued demurrage
-  -> check balance >= fee               // revert if insufficient
-  -> GoldRegistry.recordStorageFeePayment(who)  // 0x65afd0ed - record timestamp
-  -> deduct fee from tx.origin
-  -> credit fee to accounting wallet
+payStorageFee(_gold)
+  -> GoldRegistry.getFee(_gold)           // get fee amount (_sfee)
+  -> addUser(tx.origin) if new            // create account if first interaction
+  -> deductFees(tx.origin)                // settle accrued demurrage
+  -> check balanceOf(tx.origin) >= _sfee  // revert if insufficient
+  -> GoldRegistry.regFeePayment(_gold)    // 0x65afd0ed - record timestamp
+  -> deduct _sfee from tx.origin
+  -> credit _sfee to accounting wallet
   -> emit Transfer event
 ```
 
 ## Attribution
 
-Source reconstructed by [EthereumHistory](https://ethereumhistory.com) via bytecode reverse engineering.
+Source reconstructed by [EthereumHistory](https://ethereumhistory.com) via bytecode reverse engineering. The function name `regFeePayment` for selector `0x65afd0ed` and the exact `payStorageFee` implementation were provided by **Anthony Eufemio** (Digix CTO).
